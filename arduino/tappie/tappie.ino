@@ -74,7 +74,7 @@ void loop(void) {
       pouringIsComplete = false;
       cupID = "";
 
-      digitalWrite(RELAY_PIN, HIGH); // Make sure the relay is turned off.
+      //digitalWrite(RELAY_PIN, HIGH); // Make sure the relay is turned off.
       
       // Show screensaver
       ledScreensaver();
