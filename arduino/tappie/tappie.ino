@@ -9,6 +9,7 @@
 #define RELAY_PIN 6
 
 #define POURING_TIME_THRESHOLD 5000 // Time after which to stop pouring.
+#define CLEANING_TIME_THRESHOLD 8000 // Time after which to stop pouring.
 #define DETECT_CUP_THRESHOLD 4000 // Time after which to scan for cup
 
 PN532_I2C pn532_i2c(Wire);
@@ -16,11 +17,15 @@ NfcAdapter nfc = NfcAdapter(pn532_i2c);
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(LED_NUM, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 String cupID = ""; // Id of the CUP that was last detected.
+bool raspiIsConnected = false;
 bool isPouring = false;
+bool isCleaning = false;
 bool cupIsPresent = false;
 bool cupValidationInProgress = false;
 bool pouringIsComplete = false;
+bool cleaningIsComplete = false;
 long timeSincePouringStart = 0; // Time how long pouring is busy
+long timeSinceCleaningStart = 0; // Time how long cleaning is busy
 long timeSinceLastCupCheck = 0;
 
 bool ledTimeTurnOn = true; // Used as an indication to turn on or off the leds
@@ -40,7 +45,7 @@ void setup(void) {
 void loop(void) {
 
     // Detect if a cup is present.
-    if ((millis() - timeSinceLastCupCheck) >= DETECT_CUP_THRESHOLD) {
+    if ((millis() - timeSinceLastCupCheck) >= DETECT_CUP_THRESHOLD && raspiIsConnected) {
       Serial.println("checking cup");
       timeSinceLastCupCheck = millis();
 
@@ -58,32 +63,37 @@ void loop(void) {
     }
     }
     
-        
-    if (isPouring == true && (millis() - timeSincePouringStart) >= POURING_TIME_THRESHOLD) { // Pouring complete
+    if (isCleaning == true && (millis() - timeSinceCleaningStart) >= CLEANING_TIME_THRESHOLD) {
+      stopCleaning();
+    } else if (isPouring == true && (millis() - timeSincePouringStart) >= POURING_TIME_THRESHOLD) { // Pouring complete
       stopPouring();
-    } else if (isPouring == true) { // Busy pouring
-      ledPouringInProgress();
-      Serial.println("busy pour");   
+    } else if (isPouring == true || isCleaning == true) { // Busy pouring or cleaning
+      ledPouringInProgress(isCleaning);
+      Serial.println("busy pour/ clean");   
     } else if (cupValidationInProgress == true) { // Cup validation in progress
       ledCupValidationInProgress();
-    } else if (cupIsPresent && pouringIsComplete) {
+    } else if (cupIsPresent && (pouringIsComplete || cleaningIsComplete)) {
        ledShowComplete(ledTimeTurnOn);
-    } else if (cupIsPresent && !isPouring && !cupValidationInProgress) { // There is a cup present, but nothing is happening.
+    } else if (cupIsPresent && !isPouring && !cupValidationInProgress && !isCleaning) { // There is a cup present, but nothing is happening.
       ledError(ledTimeTurnOn);
-    } else if (!cupIsPresent) { // There is no cup present
+    } else if (!cupIsPresent) { // There is no cup present. Reset values.
       pouringIsComplete = false;
+      cleaningIsComplete = false;
       cupID = "";
-
-      //digitalWrite(RELAY_PIN, HIGH); // Make sure the relay is turned off.
-      
+ 
       // Show screensaver
       ledScreensaver();
     }
     
-    if (cupValidationInProgress && Serial.available() > 0) { // Cup validation complete
+    if ((cupValidationInProgress || !raspiIsConnected) && Serial.available() > 0) { // Received input from raspi
       String incoming = Serial.readString();
-      
-      didValidateCup(incoming == "1"); // 0 is not validated, 1 is validated.
+
+      if (incoming == "R") {
+        Serial.println("RASPI CONNECTED");
+        raspiIsConnected = true;
+      } else {
+        didValidateCup(incoming == "1"); // 0 is not validated, 1 is validated.
+      }
     }
     
     ledTimeTurnOn = !ledTimeTurnOn;
@@ -92,9 +102,20 @@ void loop(void) {
 
 // A cup was detected by the NFC reader
 void didDetectCup(String cupId) {
-  cupValidationInProgress = true;
-  Serial.println("did detect cup");
-  Serial.println(cupId);  // Send cupID for verification to Raspi.
+
+  if (cupID == "04 C6 AE 02 74 4C 80") { // Cleaning cup
+    if (!isCleaning) { // Start cleaning if not already busy.
+      startCleaning();
+    }
+  } else if (cupID == "09 09 09") { // Valid example cup
+    didValidateCup(true);
+  } else if (cupID == "01 01 01") { // Invalid example cup
+    didValidateCup(false);
+  } else {
+    cupValidationInProgress = true;
+    Serial.println("did detect cup");
+    Serial.println(cupId);  // Send cupID for verification to Raspi.
+  }
 }
 
 // Raspi validated the cup: pouring can start or will be denied.
@@ -107,6 +128,25 @@ void didValidateCup(bool isValid) {
   } else { // Cup is not valided.
     Serial.println("not validated");
   }
+}
+
+void startCleaning() {
+  isCleaning = true;
+  timeSinceCleaningStart = millis();
+  digitalWrite(RELAY_PIN, LOW);
+
+  Serial.println("start clean");
+}
+
+void stopCleaning() {
+  isCleaning = false;
+  cleaningIsComplete = true;
+  timeSinceCleaningStart = 0;
+  digitalWrite(RELAY_PIN, HIGH);
+  ledShowComplete(ledTimeTurnOn);
+
+
+  Serial.println("cleaning completed");
 }
 
 // Starts the pouring of liquid.
@@ -124,8 +164,7 @@ void stopPouring() {
   pouringIsComplete = true;
   timeSincePouringStart = 0;
   digitalWrite(RELAY_PIN, HIGH);
-  ledPouringComplete();
-
+  ledShowComplete(ledTimeTurnOn);
 
   Serial.println("stop pour");
 }
@@ -141,58 +180,65 @@ void ledSetColor(short r, short g, short b) {
 
 // Shown when tappie is ready to go
 void ledScreensaver() {
-  ledSetColor(50,50,50);
+  if (raspiIsConnected) {
+    ledSetColor(50,50,50);
+  } else {
+    ledSetColor(255,0,0);
+  }
 }
 
 void ledShowComplete(bool colourIsOn) {
   if (colourIsOn) {
-    ledSetColor(0,255,0);
+    for (uint16_t i=0; i<80;i++) {
+      short colour = 30 + (2 * i);
+      ledSetColor(0,colour,0);
+      delay(10);
+    }
   } else {
-    ledSetColor(0,0,0);
-  }
+    for (uint16_t i=0; i<80;i++) {
+          short colour = 190 - (2 * i);
+          ledSetColor(0,colour,0);
+          delay(10);
+        }
+      }
 }
 
 // Shown when an error occured.
 void ledError(bool colourIsOn) {
 
   if (colourIsOn) {
-    ledSetColor(255,0,0);
+    for (uint16_t i=0; i<80;i++) {
+      short colour = 30 + (2 * i);
+      ledSetColor(colour,0,0);
+      delay(10);
+    }
   } else {
-    ledSetColor(0,0,0);
-  }
-  
+    for (uint16_t i=0; i<80;i++) {
+          short colour = 190 - (2 * i);
+          ledSetColor(colour,0,0);
+          delay(10);
+        }
+      }
 }
 
 // Shown when cup validation is in progress
 void ledCupValidationInProgress() {
-  ledSetColor(0,0,255);
+  ledSetColor(0,0,100);
 }
 
 // Shown when pouring is in progress.
-void ledPouringInProgress() {
-
-
+void ledPouringInProgress(bool isCleaning) {
   double procentComplete = ((millis() - timeSincePouringStart) / (POURING_TIME_THRESHOLD / 100));
+  
+  if (isCleaning) { // Cleaning
+    double procentComplete = ((millis() - timeSinceCleaningStart) / (CLEANING_TIME_THRESHOLD / 100));
 
-  int ledsToTurnOn = LED_NUM * (procentComplete / 100);
-
-  if (ledsToTurnOn < 2) {
-    ledSetColor(0,0,0);
-  } else {
-    for(uint16_t i=0; i<ledsToTurnOn; i++) {
-      Serial.println("turning on led");
-   strip.setPixelColor(i, strip.Color(0, 255, 0));
-   
-  strip.show();
-   delay(50);
-  }
+  } else { 
+    // default
   }
   
-}
+  int colourBrightness = 255 * (procentComplete / 100);
 
-// Shown when pouring is complete
-void ledPouringComplete() {
-  ledSetColor(0,255,0);
+  ledSetColor(0,colourBrightness,0);
 }
-
 
