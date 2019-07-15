@@ -107,9 +107,9 @@ void didDetectCup(String cupId) {
     if (!isCleaning) { // Start cleaning if not already busy.
       startCleaning();
     }
-  } else if (cupID == "09 09 09") { // Valid example cup
+  } else if (cupID == "04 78 85 9A F4 48 81") { // Valid example cup
     didValidateCup(true);
-  } else if (cupID == "01 01 01") { // Invalid example cup
+  } else if (cupID == "04 84 85 9A F4 48 81") { // Invalid example cup
     didValidateCup(false);
   } else {
     cupValidationInProgress = true;
