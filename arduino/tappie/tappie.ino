@@ -8,7 +8,7 @@
 #define LED_NUM 16
 #define RELAY_PIN 6
 
-#define POURING_TIME_THRESHOLD 5000 // Time after which to stop pouring.
+#define POURING_TIME_THRESHOLD 10000 // Time after which to stop pouring.
 #define CLEANING_TIME_THRESHOLD 8000 // Time after which to stop pouring.
 #define DETECT_CUP_THRESHOLD 4000 // Time after which to scan for cup
 
