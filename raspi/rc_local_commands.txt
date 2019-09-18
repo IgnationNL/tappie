@@ -1,0 +1,3 @@
+cd /home/pi/BoT-NodeJS-SDK/ && node lib/app.js &
+sudo sh /home/pi/Desktop/tappie/run_tappie.sh
+
